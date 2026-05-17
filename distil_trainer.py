@@ -1139,11 +1139,13 @@ class DistilTrainer(BaseTrainer):
                     "top_k": -1 if self.top_k is None else self.top_k,
                     "min_p": 0.0 if self.min_p is None else self.min_p,
                     "max_tokens": self.max_completion_length,
-                    "truncate_prompt_tokens": self.max_prompt_length,
                     "logprobs": 0,  # only return the logprob of the generated token
                 }
                 if self.args.generation_kwargs is not None:
                     generation_kwargs.update(self.args.generation_kwargs)
+                # `truncate_prompt_tokens` was moved out of SamplingParams in vLLM >= 0.21;
+                # pop it (if a user provided it via generation_kwargs) and pass through tokenization_kwargs.
+                truncate_prompt_tokens = generation_kwargs.pop("truncate_prompt_tokens", self.max_prompt_length)
                 sampling_params = SamplingParams(**generation_kwargs)
 
                 if self.vllm_tensor_parallel_size > 1:
@@ -1173,7 +1175,17 @@ class DistilTrainer(BaseTrainer):
                     vllm_inputs = all_prompts_text
 
                 with profiling_context(self, "vLLM.generate"):
-                    all_outputs = self.llm.generate(vllm_inputs, sampling_params=sampling_params, use_tqdm=False)
+                    tokenization_kwargs = (
+                        {"truncate_prompt_tokens": truncate_prompt_tokens}
+                        if truncate_prompt_tokens is not None
+                        else None
+                    )
+                    all_outputs = self.llm.generate(
+                        vllm_inputs,
+                        sampling_params=sampling_params,
+                        tokenization_kwargs=tokenization_kwargs,
+                        use_tqdm=False,
+                    )
 
                 all_prompt_ids = [output.prompt_token_ids for output in all_outputs]
                 all_completion_ids = [output.token_ids for outputs in all_outputs for output in outputs.outputs]
